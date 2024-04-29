@@ -1,9 +1,18 @@
 # Download the helper library from https://www.twilio.com/docs/python/install
 import os
+import json
+
+import schedule
+import requests
 from twilio.rest import Client
 from pygooglenews import GoogleNews
 
 from openai import OpenAI
+
+# ----- local info storage -----
+
+players = {}
+FILE_LOCATION = os.environ['FILE_STORE']
 
 # ----- GoogleNews Config -----
 
@@ -38,9 +47,13 @@ def notify(phone: str, message: str):
         )
 
 
-def notify_all(phones: list, message: str):
+def notify_all(message: str):
+    global players
+
+    phones = [players[x]['phone'] for x in players]
     for phone in phones:
         notify(phone, message)
+
 
 def check_if_dead(name):
 
@@ -67,4 +80,53 @@ def check_if_dead(name):
     )
 
     return response.choices[0].message.content
+
+
+def load_players():
+    global players
+    with open('players.json', 'r') as f:
+        players = json.load(f)
+
+
+def save_players():
+    global players
+    with open('players.json', 'w') as f:
+        json.dump(players, f)
+
+
+def check_all():
+    for player in players:
+        for name in player['names']:
+            if check_if_dead(name):
+
+                players[player]['names'].remove(name)
+                players[player]['score'] += 1
+                notify_all(f"Ouch! Looks like {name} died, leaving {player}'s score at {players[player]['score']}")
+
+
+def notify_scores():
+    out = "Checking in! The current scores are:"
+    for player in players:
+        out += f"\n{player}: {player['score']}"
+    notify_all(out)
+
+
+if __name__ == "__main__":
+
+    if os.path.exists('players.json'):
+        load_players()
+    else:
+        players = requests.get(os.environ["PLAYERS_GET_URL"]).json()
+        save_players()
+
+    with open("conf.json", "rw") as file_conf:
+        conf = json.load(file_conf)
+    if conf["first_time"]:
+        notify_all("Welcome to Corkd - your number one text-based source for finding out whether your favourites have"
+                   "corked it. You'll be receiving weekly updates on the score of the game at 10am every Wednesday, "
+                   "along with little updates any time the score changes.")
+        conf["first_time"] = False
+
+    schedule.every(8).hours.do(check_all)
+    schedule.every().tuesday.at("11:00", "Europe/London").do(notify_scores)
 
